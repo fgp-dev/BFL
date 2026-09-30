@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use BFL, please cite this software."
+type: software
+title: "Bit Flip Learning (BFL)"
+authors:
+  - family-names: "Gomez Prates"
+    given-names: "Facundo"
+version: 0.1.0
+date-released: 2026-09-30
+license: Apache-2.0
+url: "https://github.com/fgp-dev/BFL"

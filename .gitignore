@@ -1,0 +1,10 @@
+/build/
+/results/local/
+/results/local-generalization/
+*.o
+*.a
+
+# LaTeX intermediates
+*.aux
+*.log
+*.out

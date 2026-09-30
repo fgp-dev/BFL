@@ -1,0 +1,2 @@
+Runtime-dispatched backend: All BFL tests passed
+Forced scalar backend: All BFL tests passed
