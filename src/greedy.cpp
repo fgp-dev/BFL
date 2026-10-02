@@ -3,6 +3,7 @@
 #include "bfl/greedy.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -281,35 +282,79 @@ GreedyTrainReport GreedyModel::train(const Dataset& data, const GreedyTrainConfi
     auto current = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
     GreedyTrainReport report;
     report.initial_error_bits = current.error_bits;
+    const bool anneal = config.initial_temperature > 0;
+    double temperature = config.initial_temperature;
+    std::size_t best_error = current.error_bits;
+    std::vector<std::uint64_t> best_nodes;
+    if (anneal) best_nodes = nodes_;
     std::size_t stagnant = 0;
     std::uint32_t rng = config.seed ? config.seed : 1u;
-    for (std::size_t epoch = 1; epoch <= config.max_epochs && current.error_bits; ++epoch) {
+    for (std::size_t epoch = 1; epoch <= config.max_epochs && best_error; ++epoch) {
         report.epochs_ran = epoch;
-        auto candidates = collect_candidates(config_, layer_widths_, layer_offsets_, nodes_, packed);
-        if (config.shuffle_candidates && candidates.size() > 1) {
-            for (std::size_t i = candidates.size() - 1; i > 0; --i) {
+        auto pool = collect_candidates(config_, layer_widths_, layer_offsets_, nodes_, packed);
+        if (config.shuffle_candidates && pool.size() > 1) {
+            for (std::size_t i = pool.size() - 1; i > 0; --i) {
                 const auto j = rng_range(rng, static_cast<std::uint32_t>(i + 1));
-                std::swap(candidates[i], candidates[j]);
+                std::swap(pool[i], pool[j]);
             }
         }
+        auto candidates = pool;
         if (config.candidate_limit && candidates.size() > config.candidate_limit)
             candidates.resize(config.candidate_limit);
-        std::size_t accepted = 0;
+        bool improved = false;
+        const auto note = [&] {
+            if (current.error_bits < best_error) {
+                best_error = current.error_bits;
+                if (anneal) best_nodes = nodes_;
+                improved = true;
+            }
+        };
         for (const auto id : candidates) {
             ++report.tested_flips;
             nodes_[id] ^= state_mask;
             const auto trial = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
-            if (trial.error_bits < current.error_bits) {
+            bool keep = trial.error_bits < current.error_bits;
+            if (!keep && anneal) {
+                const double increase = double(trial.error_bits) - double(current.error_bits);
+                const double draw = rng_next(rng) / 4294967296.0;
+                keep = increase <= 0 || draw < std::exp(-increase / temperature);
+            }
+            if (keep) {
                 current = trial;
-                ++accepted;
                 ++report.accepted_flips;
+                note();
             } else {
                 nodes_[id] ^= state_mask;
             }
-            if (!current.error_bits) break;
+            if (!best_error) break;
         }
-        stagnant = accepted ? 0 : stagnant + 1;
+        if (!improved && best_error && config.pair_flips && pool.size() > 1) {
+            for (std::size_t k = 0; k < config.pair_flips; ++k) {
+                const auto i = rng_range(rng, static_cast<std::uint32_t>(pool.size()));
+                auto j = rng_range(rng, static_cast<std::uint32_t>(pool.size() - 1));
+                if (j >= i) ++j;
+                ++report.tested_flips;
+                nodes_[pool[i]] ^= state_mask;
+                nodes_[pool[j]] ^= state_mask;
+                const auto trial = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
+                if (trial.error_bits < current.error_bits) {
+                    current = trial;
+                    ++report.accepted_flips;
+                    note();
+                    if (!best_error) break;
+                } else {
+                    nodes_[pool[i]] ^= state_mask;
+                    nodes_[pool[j]] ^= state_mask;
+                }
+            }
+        }
+        if (anneal) temperature *= config.cooling;
+        stagnant = improved ? 0 : stagnant + 1;
         if (config.patience && stagnant >= config.patience) break;
+    }
+    if (anneal && best_error < current.error_bits) {
+        nodes_ = best_nodes;
+        current = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
     }
     report.final_error_bits = current.error_bits;
     return report;

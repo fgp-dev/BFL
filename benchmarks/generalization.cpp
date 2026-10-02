@@ -122,6 +122,13 @@ struct MLP {
     }
 };
 
+// Constant predictor of the training majority class: the floor any model must beat.
+Metrics constant_metrics(bfl::Bit value, const std::vector<Sample>& samples) {
+    std::size_t errors = 0;
+    for (const auto& sample : samples) errors += sample.target != value;
+    return {errors, 1.0 - double(errors) / samples.size()};
+}
+
 Metrics mlp_metrics(const MLP& model, const std::vector<Sample>& samples) {
     std::size_t errors = 0;
     for (const auto& sample : samples) errors += model.predict(sample.input) != sample.target;
@@ -172,8 +179,12 @@ void print_row(const std::string& task, std::uint64_t seed, const char* model,
 
 struct TrainedBFL { bfl::GreedyModel model; double milliseconds = 0; };
 
+struct SearchVariant { const char* suffix; std::size_t pair_flips; double temperature; };
+constexpr std::array<SearchVariant, 3> variants{{
+    {"", 0, 0.0}, {"_pairs", 64, 0.0}, {"_anneal", 0, 1.5}}};
+
 TrainedBFL fit_bfl(const bfl::Dataset& train_data, std::uint64_t seed,
-                   std::size_t candidate) {
+                   std::size_t candidate, const SearchVariant& variant) {
     bfl::GreedyConfig model_config;
     model_config.input_bits = input_bits;
     model_config.output_bits = 1;
@@ -186,6 +197,8 @@ TrainedBFL fit_bfl(const bfl::Dataset& train_data, std::uint64_t seed,
     train_config.candidate_limit = 128;
     train_config.patience = 15;
     train_config.seed = static_cast<std::uint32_t>(seed * 103 + 1234 + candidate * 10009);
+    train_config.pair_flips = variant.pair_flips;
+    train_config.initial_temperature = variant.temperature;
     const auto start = std::chrono::steady_clock::now();
     model.train(train_data, train_config);
     const double milliseconds = std::chrono::duration<double, std::milli>(
@@ -203,36 +216,49 @@ int main() {
             const auto train_data = direct_data(split.train);
             const auto validation_data = direct_data(split.validation);
             const auto test_data = direct_data(split.test);
-            std::vector<TrainedBFL> candidates;
-            candidates.reserve(16);
-            std::size_t chosen_index = 0;
-            Metrics chosen_validation{};
-            double search_ms = 0;
-            constexpr std::size_t candidate_models = 16;
-            for (std::size_t candidate = 0; candidate < candidate_models; ++candidate) {
-                auto trial = fit_bfl(train_data, seed, candidate);
-                search_ms += trial.milliseconds;
-                const Metrics validation = greedy_metrics(trial.model, validation_data);
-                if (candidate == 0 || validation.errors < chosen_validation.errors ||
-                    (validation.errors == chosen_validation.errors &&
-                     greedy_metrics(trial.model, train_data).errors <
-                     greedy_metrics(candidates[chosen_index].model, train_data).errors)) {
-                    chosen_index = candidate;
-                    chosen_validation = validation;
+            for (const auto& variant : variants) {
+                std::vector<TrainedBFL> candidates;
+                candidates.reserve(16);
+                std::size_t chosen_index = 0;
+                Metrics chosen_validation{};
+                double search_ms = 0;
+                constexpr std::size_t candidate_models = 16;
+                for (std::size_t candidate = 0; candidate < candidate_models; ++candidate) {
+                    auto trial = fit_bfl(train_data, seed, candidate, variant);
+                    search_ms += trial.milliseconds;
+                    const Metrics validation = greedy_metrics(trial.model, validation_data);
+                    if (candidate == 0 || validation.errors < chosen_validation.errors ||
+                        (validation.errors == chosen_validation.errors &&
+                         greedy_metrics(trial.model, train_data).errors <
+                         greedy_metrics(candidates[chosen_index].model, train_data).errors)) {
+                        chosen_index = candidate;
+                        chosen_validation = validation;
+                    }
+                    candidates.push_back(std::move(trial));
                 }
-                candidates.push_back(std::move(trial));
+                const auto& first = candidates.front();
+                const auto& chosen = candidates[chosen_index];
+                const std::string single = std::string("bfl_greedy_single") + variant.suffix;
+                const std::string selected = std::string("bfl_greedy_selected") + variant.suffix;
+                print_row(task, seed, single.c_str(), split,
+                          greedy_metrics(first.model, train_data),
+                          greedy_metrics(first.model, validation_data),
+                          greedy_metrics(first.model, test_data), 1,
+                          first.model.model_storage_bytes(), first.milliseconds);
+                print_row(task, seed, selected.c_str(), split,
+                          greedy_metrics(chosen.model, train_data), chosen_validation,
+                          greedy_metrics(chosen.model, test_data), candidate_models,
+                          chosen.model.model_storage_bytes(), search_ms);
             }
-            const auto& first = candidates.front();
-            const auto& chosen = candidates[chosen_index];
-            print_row(task, seed, "bfl_greedy_single", split,
-                      greedy_metrics(first.model, train_data),
-                      greedy_metrics(first.model, validation_data),
-                      greedy_metrics(first.model, test_data), 1,
-                      first.model.model_storage_bytes(), first.milliseconds);
-            print_row(task, seed, "bfl_greedy_selected", split,
-                      greedy_metrics(chosen.model, train_data), chosen_validation,
-                      greedy_metrics(chosen.model, test_data), candidate_models,
-                      chosen.model.model_storage_bytes(), search_ms);
+            {
+                std::size_t ones = 0;
+                for (const auto& sample : split.train) ones += sample.target;
+                const bfl::Bit majority = ones * 2 >= split.train.size();
+                print_row(task, seed, "majority_class", split,
+                          constant_metrics(majority, split.train),
+                          constant_metrics(majority, split.validation),
+                          constant_metrics(majority, split.test), 1, 1, 0.0);
+            }
 
             auto direct = make_direct_lookup();
             auto start = std::chrono::steady_clock::now();

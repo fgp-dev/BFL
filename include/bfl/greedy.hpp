@@ -27,6 +27,15 @@ struct GreedyTrainConfig {
     std::size_t patience = 10; // Zero means no early stop for stagnation.
     std::uint32_t seed = 1234;
     bool shuffle_candidates = true;
+    // Optional search extensions. Defaults reproduce the original greedy rule.
+    // When an epoch accepts no single flip, try up to this many random pairs of
+    // candidate bits and keep a pair only if the training error falls.
+    std::size_t pair_flips = 0;
+    // Simulated annealing: a flip that does not lower the error is kept with
+    // probability exp(-increase / temperature). Zero disables it. The best
+    // state seen is restored when training ends.
+    double initial_temperature = 0;
+    double cooling = 0.95; // Temperature multiplier applied after each epoch.
 };
 
 struct GreedyMetrics {

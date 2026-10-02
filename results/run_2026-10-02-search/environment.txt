@@ -1,0 +1,6 @@
+UTC date: 2026-10-02 15:29:32 UTC
+C++ compiler: Apple clang version 21.0.0 (clang-2100.1.1.101)
+Machine: Darwin arm64 (macOS, libc++)
+Note: std::shuffle differs between standard libraries, so the splits (and every absolute number) differ from run_2026-09-30-generalization, which was measured with GCC/libstdc++. Compare variants within this run only; the unmodified greedy rule gives bit-identical results to the previous code on the same machine.
+Command: g++ -std=c++17 -O3 -Iinclude src/bfl.cpp src/greedy.cpp benchmarks/generalization.cpp; ./generalization > benchmark.csv
+Variants: baseline greedy; pair_flips=64; initial_temperature=1.5 (cooling 0.95). 3 layers x 64 MUXes, 100 epochs, 128 candidates, patience 15, 16 topology starts selected on validation; seeds 1..20.
