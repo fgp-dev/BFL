@@ -51,3 +51,21 @@ Mean accuracies over the 20 matched splits:
 | XOR of two bits | MLP, 16 hidden units | 1.000 | 1.000 | **1.000** |
 
 The new OR result is close to, but does not reproduce, the previously reported “around 80% versus 100%”: it is **76.2% versus 100%** under this declared protocol, with BFL test scores from 60.9% to 84.4% across seeds. No dataset or script for the historical figure was present in the supplied archive. On these tasks, validation-based topology selection improves `GreedyModel` over one arbitrary topology, but its held-out accuracy varies by task. The models use different learning rules and graph families; the matched split supports this specific comparison, not a general ranking of algorithms. The CSV also contains per-seed errors, model storage, and training times. `reported_model_bytes` uses each implementation's own storage estimate (packed MUX words, C++ graph allocation estimate, or MLP weights), so those byte values are not a matched total-memory measure.
+
+## Search extensions: pair flips and annealing
+
+[`run_2026-10-02-search/benchmark.csv`](run_2026-10-02-search/benchmark.csv) repeats the generalization protocol above with two optional `GreedyTrainConfig` extensions and one new reference row. Both extensions are off by default, and with defaults the model is bit-identical to the previous rule (checked on the same machine; see `environment.txt`).
+
+- `pair_flips = N`: when an epoch accepts no single flip, try up to `N` random pairs of candidate bits and keep a pair only if the training error falls (`_pairs`, N = 64).
+- `initial_temperature = T`: simulated annealing; a flip that does not lower the error is kept with probability `exp(-increase / T)`, T is multiplied by `cooling` each epoch, and the best state seen is restored at the end (`_anneal`, T = 1.5).
+- `majority_class`: constant predictor of the training majority class. On the OR task the target is 1 for about three quarters of inputs, so this floor is high (test .729 here).
+
+Mean test accuracy over 20 matched splits, validation-selected of 16 topologies (absolute values are not comparable to the 2026-09-30 table; see the note in `environment.txt`):
+
+| Task | majority_class | greedy | + pair flips | + annealing | MLP |
+|---|---:|---:|---:|---:|---:|
+| OR of two bits | .729 | .786 | .842 | .830 | 1.000 |
+| Majority of three bits | .476 | .767 | .794 | .770 | 1.000 |
+| XOR of two bits | .476 | .637 | .667 | .663 | 1.000 |
+
+Paired per-seed gain over the baseline greedy (mean, 95% normal interval over 20 seeds): pair flips +.056 [+.020, +.092] on OR, +.030 [-.014, +.074] on XOR, +.027 [-.006, +.060] on majority; annealing +.045 [-.005, +.095] on OR, +.027 on XOR, +.002 on majority (all intervals include zero except OR with pair flips). Pair flips cost about 3.5 times the training time (16.4 ms against 4.6 ms for the 16-start search). The honest reading is a small, consistent gain from pair flips that is clearly above noise only on OR, and no demonstrated gain from annealing at this temperature. Neither closes the gap to the MLP. On OR the baseline greedy model is only about six points above the constant predictor.

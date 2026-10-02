@@ -126,9 +126,63 @@ void test_persistence() {
     std::filesystem::remove(path);
 }
 
+Dataset xor_dataset() {
+    return {{{0, 0}, {0}}, {{0, 1}, {1}}, {{1, 0}, {1}}, {{1, 1}, {0}}};
+}
+
+void test_search_extensions_never_return_a_worse_state() {
+    const auto data = xor_dataset();
+    for (std::uint32_t seed = 1; seed <= 8; ++seed) {
+        GreedyModel model({2, 1, 3, 32, seed});
+        GreedyTrainConfig config;
+        config.max_epochs = 30;
+        config.patience = 0;
+        config.seed = seed;
+        config.initial_temperature = 2.0;
+        config.pair_flips = 16;
+        const auto report = model.train(data, config);
+        assert(report.final_error_bits <= report.initial_error_bits);
+        assert(model.evaluate(data).error_bits == report.final_error_bits);
+    }
+}
+
+void test_defaults_match_the_original_greedy_rule() {
+    const auto data = xor_dataset();
+    GreedyModel a({2, 1, 3, 32, 44}), b({2, 1, 3, 32, 44});
+    GreedyTrainConfig plain;
+    plain.max_epochs = 8; plain.candidate_limit = 64; plain.patience = 3; plain.seed = 7;
+    auto explicit_off = plain;
+    explicit_off.pair_flips = 0;
+    explicit_off.initial_temperature = 0;
+    a.train(data, plain);
+    b.train(data, explicit_off);
+    assert(a.export_state() == b.export_state());
+}
+
+void test_pair_flips_reduce_error_when_single_flips_stall() {
+    const auto data = xor_dataset();
+    std::size_t improved = 0;
+    for (std::uint32_t seed = 1; seed <= 20; ++seed) {
+        GreedyModel single({2, 1, 3, 32, seed}), paired({2, 1, 3, 32, seed});
+        GreedyTrainConfig config;
+        config.max_epochs = 30;
+        config.patience = 0;
+        config.seed = seed;
+        single.train(data, config);
+        config.pair_flips = 64;
+        paired.train(data, config);
+        assert(paired.evaluate(data).error_bits <= single.evaluate(data).error_bits + 1);
+        improved += paired.evaluate(data).error_bits < single.evaluate(data).error_bits;
+    }
+    assert(improved > 0);
+}
+
 int main() {
     test_packed_evaluation_and_batch();
     test_training_and_state();
     test_persistence();
+    test_defaults_match_the_original_greedy_rule();
+    test_search_extensions_never_return_a_worse_state();
+    test_pair_flips_reduce_error_when_single_flips_stall();
     std::cout << "All greedy BFL tests passed\n";
 }
