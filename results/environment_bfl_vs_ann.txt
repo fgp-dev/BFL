@@ -1,0 +1,5 @@
+UTC date: 2026-10-03 13:04:43 UTC
+Compiler: g++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0
+Flags: -std=c++17 -O3 -march=native -Wall -Wextra -Wpedantic
+CPU: AMD Ryzen 7 5700U with Radeon Graphics
+Seeds: 1..50

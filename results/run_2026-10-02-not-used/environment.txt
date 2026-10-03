@@ -1,0 +1,9 @@
+UTC date: 2026-10-02 20:52:51 UTC
+C++ compiler: g++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0
+CPU: AMD Ryzen 7 5700U with Radeon Graphics
+Implementation: BFL C++17 greedy MUX port with single-bit and CHANGE/USED masked rules; no C dependency
+Task and split: benchmarks/generalization.cpp; 8 variable bits plus constant one; shuffled finite domain; 128 train, 64 validation, 64 test; seeds 1..20
+Greedy BFL: 3 hidden layers x 64 MUXes; 100 epochs maximum; 128 candidates/epoch; patience 15; 1 or 16 topology starts, selected by validation only
+Masked BFL: joint flips on active paths of wrong outputs; global objective 10 * error bits plus used, unused, or zero usage term; same topology seeds and training limits
+Direct-state control: one adaptive lookup leaf per 8-bit input, count routing, 3 online epochs
+MLPs: 9 inputs, 4 or 16 tanh hidden units, sigmoid output, full-batch Adam 1500 epochs; one initialization each

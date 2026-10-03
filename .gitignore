@@ -1,8 +1,14 @@
 /build/
+/.agents/
+/.aws/
+/.codex/
 /results/local/
 /results/local-generalization/
+/results/local-weight-search/
 *.o
 *.a
+__pycache__/
+*.py[cod]
 
 # LaTeX intermediates
 *.aux

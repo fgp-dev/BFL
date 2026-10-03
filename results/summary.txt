@@ -1,0 +1,110 @@
+Task: binary threshold over 16 fixed features; 50 matched seeds.
+Train: 600 unique inputs; test: 424 unique inputs; 10 binary inputs total.
+SD is population standard deviation across seeds. NaN means unavailable.
+Inference mean/median/p95 are across five batches of 200,000 calls per seed.
+
+bfl_old
+  train_accuracy: mean=0.623833, median=0.625000, min=0.501667, max=0.771667, sd=0.048483
+  test_accuracy: mean=0.599198, median=0.597877, min=0.504717, max=0.731132, sd=0.052622
+  generalization_gap: mean=0.024635, median=0.033270, min=-0.043428, max=0.082610, sd=0.030271
+  model_bytes: mean=324.000000, median=324.000000, min=324.000000, max=324.000000, sd=0.000000
+  parameter_state_bytes: mean=264.000000, median=264.000000, min=264.000000, max=264.000000, sd=0.000000
+  temporary_training_bytes: mean=2223.520000, median=2224.000000, min=2008.000000, max=2240.000000, sd=31.694946
+  temporary_inference_bytes: mean=33.000000, median=33.000000, min=33.000000, max=33.000000, sd=0.000000
+  training_ms: mean=0.124212, median=0.126626, min=0.091681, max=0.154358, sd=0.015360
+  training_ns_per_sample: mean=30.998307, median=30.653453, min=25.466944, max=42.877222, sd=2.700209
+  training_ms_per_epoch: mean=0.018599, median=0.018392, min=0.015280, max=0.025726, sd=0.001620
+  ns_per_inference: mean=90.545519, median=90.026424, min=68.327028, max=115.398496, sd=11.227756
+  median_ns_per_inference: mean=88.538309, median=87.871737, min=66.626495, max=112.601550, sd=11.262697
+  p95_batch_ns_per_inference: mean=100.747791, median=100.450185, min=74.364935, max=125.850165, sd=11.621439
+  instructions_per_inference: unavailable
+  cycles_per_inference: unavailable
+  branches_per_inference: unavailable
+  branch_misses_per_inference: unavailable
+  cache_misses_per_inference: unavailable
+  forget_count: unavailable
+  change_cost: unavailable
+  candidate_evaluations: mean=76.700000, median=77.000000, min=45.000000, max=104.000000, sd=12.673200
+  popcount_operations: unavailable
+  accepted_updates: mean=4.260000, median=4.000000, min=0.000000, max=8.000000, sd=1.916351
+  rejected_candidates: unavailable
+  effective_changed_bits: unavailable
+  average_candidate_evaluations_per_update: mean=21.070685, median=17.333333, min=8.000000, max=72.000000, sd=11.713430
+  err_improves: unavailable
+  err_ties_forget_improves: unavailable
+  err_forget_ties_change_improves: unavailable
+
+bfl_binary_global
+  train_accuracy: mean=0.960133, median=0.960000, min=0.941667, max=0.971667, sd=0.006797
+  test_accuracy: mean=0.903066, median=0.903302, min=0.856132, max=0.943396, sd=0.019364
+  generalization_gap: mean=0.057067, median=0.058507, min=0.001604, max=0.103868, sd=0.020825
+  model_bytes: mean=256.000000, median=256.000000, min=256.000000, max=256.000000, sd=0.000000
+  parameter_state_bytes: mean=256.000000, median=256.000000, min=256.000000, max=256.000000, sd=0.000000
+  temporary_training_bytes: mean=27649.420000, median=27609.000000, min=26841.000000, max=28377.000000, sd=363.064132
+  temporary_inference_bytes: mean=0.000000, median=0.000000, min=0.000000, max=0.000000, sd=0.000000
+  training_ms: mean=194.416160, median=193.626821, min=189.892912, max=215.098115, sd=4.054517
+  training_ns_per_sample: mean=16201.346692, median=16135.568375, min=15824.409333, max=17924.842917, sd=337.876448
+  training_ms_per_epoch: mean=9.720808, median=9.681341, min=9.494646, max=10.754906, sd=0.202726
+  ns_per_inference: mean=9.702999, median=9.674474, min=9.573210, max=10.020416, sd=0.089055
+  median_ns_per_inference: mean=9.688539, median=9.666923, min=9.558205, max=9.979170, sd=0.075725
+  p95_batch_ns_per_inference: mean=9.852294, median=9.783423, min=9.648250, max=11.055650, sd=0.223633
+  instructions_per_inference: unavailable
+  cycles_per_inference: unavailable
+  branches_per_inference: unavailable
+  branch_misses_per_inference: unavailable
+  cache_misses_per_inference: unavailable
+  forget_count: mean=25.740000, median=25.000000, min=15.000000, max=53.000000, sd=8.346999
+  change_cost: mean=95.100000, median=92.000000, min=62.000000, max=129.000000, sd=15.305228
+  candidate_evaluations: mean=8364000.000000, median=8364000.000000, min=8364000.000000, max=8364000.000000, sd=0.000000
+  popcount_operations: mean=329376041.600000, median=329362640.000000, min=326375200.000000, max=333076000.000000, sd=1617271.777996
+  accepted_updates: mean=49.540000, median=48.500000, min=34.000000, max=65.000000, sd=6.687929
+  rejected_candidates: mean=8363950.460000, median=8363951.500000, min=8363935.000000, max=8363966.000000, sd=6.687929
+  effective_changed_bits: mean=95.100000, median=92.000000, min=62.000000, max=129.000000, sd=15.305228
+  average_candidate_evaluations_per_update: mean=172076.819227, median=172471.938775, min=128676.923077, max=246000.000000, sd=24442.750928
+  err_improves: mean=81.880000, median=80.500000, min=50.000000, max=118.000000, sd=14.959465
+  err_ties_forget_improves: mean=4.900000, median=5.000000, min=1.000000, max=11.000000, sd=2.402082
+  err_forget_ties_change_improves: mean=0.000000, median=0.000000, min=0.000000, max=0.000000, sd=0.000000
+
+ann_16
+  train_accuracy: mean=1.000000, median=1.000000, min=1.000000, max=1.000000, sd=0.000000
+  test_accuracy: mean=0.994764, median=0.995283, min=0.978774, max=1.000000, sd=0.004817
+  generalization_gap: mean=0.005236, median=0.004717, min=0.000000, max=0.021226, sd=0.004817
+  model_bytes: mean=1544.000000, median=1544.000000, min=1544.000000, max=1544.000000, sd=0.000000
+  parameter_state_bytes: mean=1544.000000, median=1544.000000, min=1544.000000, max=1544.000000, sd=0.000000
+  temporary_training_bytes: mean=4760.000000, median=4760.000000, min=4760.000000, max=4760.000000, sd=0.000000
+  temporary_inference_bytes: mean=128.000000, median=128.000000, min=128.000000, max=128.000000, sd=0.000000
+  training_ms: mean=142.456486, median=142.680042, min=138.237450, max=149.296230, sd=2.340063
+  training_ns_per_sample: mean=474.854955, median=475.600138, min=460.791500, max=497.654100, sd=7.800209
+  training_ms_per_epoch: mean=0.284913, median=0.285361, min=0.276475, max=0.298592, sd=0.004680
+  ns_per_inference: mean=385.659153, median=385.440797, min=369.687880, max=404.989930, sd=8.118276
+  median_ns_per_inference: mean=385.300231, median=384.705725, min=369.544375, max=403.752025, sd=8.014403
+  p95_batch_ns_per_inference: mean=387.874546, median=387.198965, min=370.713550, max=411.720950, sd=8.647792
+  instructions_per_inference: unavailable
+  cycles_per_inference: unavailable
+  branches_per_inference: unavailable
+  branch_misses_per_inference: unavailable
+  cache_misses_per_inference: unavailable
+  forget_count: unavailable
+  change_cost: unavailable
+  candidate_evaluations: unavailable
+  popcount_operations: unavailable
+  accepted_updates: unavailable
+  rejected_candidates: unavailable
+  effective_changed_bits: unavailable
+  average_candidate_evaluations_per_update: unavailable
+  err_improves: unavailable
+  err_ties_forget_improves: unavailable
+  err_forget_ties_change_improves: unavailable
+
+bfl_old relative to ann_16 (ratios of per-seed matched values)
+  memory reduction: mean=0.790155, median=0.790155, min=0.790155, max=0.790155, sd=0.000000
+  inference speedup: mean=4.325532, median=4.310940, min=3.298207, max=5.518751, sd=0.546002
+  test accuracy difference (BFL - ANN): mean=-0.395566, median=-0.395047, min=-0.495283, max=-0.268868, sd=0.053045
+  instruction reduction: unavailable
+
+bfl_binary_global relative to ann_16 (ratios of per-seed matched values)
+  memory reduction: mean=0.834197, median=0.834197, min=0.834197, max=0.834197, sd=0.000000
+  inference speedup: mean=39.748448, median=39.630183, min=38.252753, max=41.979736, sd=0.855275
+  test accuracy difference (BFL - ANN): mean=-0.091698, median=-0.091981, min=-0.136793, max=-0.056604, sd=0.018878
+  instruction reduction: unavailable
+

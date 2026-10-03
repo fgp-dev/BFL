@@ -10,45 +10,31 @@ if [[ "${MODE}" != "--prepare" && "${MODE}" != "--publish" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cmake -S "${ROOT_DIR}" -B "${ROOT_DIR}/build" -DCMAKE_BUILD_TYPE=Release
+cmake --build "${ROOT_DIR}/build" --parallel
+ctest --test-dir "${ROOT_DIR}/build" --output-on-failure
+
+if [[ "${MODE}" == "--prepare" ]]; then
+    git -C "${ROOT_DIR}" status --short
+    printf 'Checks passed. Review changes, commit them, then run --publish.\n'
+    exit 0
+fi
+
+if [[ -n "$(git -C "${ROOT_DIR}" status --porcelain)" ]]; then
+    printf 'Commit or remove uncommitted changes before publishing.\n' >&2
+    exit 1
+fi
+if [[ "$(git -C "${ROOT_DIR}" branch --show-current)" != main ]]; then
+    printf 'Switch to the main branch before publishing.\n' >&2
+    exit 1
+fi
+if [[ "$(git -C "${ROOT_DIR}" remote get-url origin)" != 'https://github.com/fgp-dev/BFL.git' ]]; then
+    printf 'The origin remote is not https://github.com/fgp-dev/BFL.git.\n' >&2
+    exit 1
+fi
 EXPECTED_ACCOUNT_ID=334613428
-AUTHOR_EMAIL="${EXPECTED_ACCOUNT_ID}+fgp-dev@users.noreply.github.com"
-mkdir -p "${ROOT_DIR}/build"
-STAGE_DIR="$(mktemp -d "${ROOT_DIR}/build/publish.XXXXXX")"
-
-# Copy only intended release assets; local credentials and build output stay out.
-cp -a "${ROOT_DIR}/CMakeLists.txt" "${ROOT_DIR}/README.md" \
-      "${ROOT_DIR}/LICENSE" "${ROOT_DIR}/NOTICE" "${ROOT_DIR}/CITATION.cff" \
-      "${ROOT_DIR}/BFL_Theory.tex" "${ROOT_DIR}/.gitignore" "${STAGE_DIR}/"
-cp -a "${ROOT_DIR}/include" "${ROOT_DIR}/src" "${ROOT_DIR}/examples" \
-      "${ROOT_DIR}/tests" "${ROOT_DIR}/benchmarks" "${ROOT_DIR}/scripts" \
-      "${ROOT_DIR}/docs" \
-      "${ROOT_DIR}/results" "${ROOT_DIR}/.github" "${STAGE_DIR}/"
-
-if [[ "${MODE}" == "--publish" ]]; then
-    gh auth status >/dev/null
-    ACCOUNT_ID="$(gh api user --jq '.id')"
-    if [[ "${ACCOUNT_ID}" != "${EXPECTED_ACCOUNT_ID}" ]]; then
-        printf 'Authenticated GitHub account is not fgp-dev.\n' >&2
-        exit 1
-    fi
-    if gh repo view fgp-dev/BFL >/dev/null 2>&1; then
-        printf 'fgp-dev/BFL already exists; refusing to overwrite it.\n' >&2
-        exit 1
-    fi
+if [[ "$(gh api user --jq '.id')" != "${EXPECTED_ACCOUNT_ID}" ]]; then
+    printf 'Authenticated GitHub account is not fgp-dev.\n' >&2
+    exit 1
 fi
-
-git -C "${STAGE_DIR}" init --initial-branch=main >/dev/null
-git -C "${STAGE_DIR}" config user.name "Facundo Gomez Prates"
-git -C "${STAGE_DIR}" config user.email "${AUTHOR_EMAIL}"
-git -C "${STAGE_DIR}" add -A
-git -C "${STAGE_DIR}" commit -m "Initial BFL release" >/dev/null
-
-printf 'Prepared source tree: %s\n' "${STAGE_DIR}"
-git -C "${STAGE_DIR}" status --short
-git -C "${STAGE_DIR}" log -1 --format='%h %an <%ae> %s'
-
-if [[ "${MODE}" == "--publish" ]]; then
-    gh repo create fgp-dev/BFL --public --source "${STAGE_DIR}" --remote origin --push \
-        --description "Bit Flip Learning library in C++17 by Facundo Gomez Prates"
-    printf 'Published: https://github.com/fgp-dev/BFL\n'
-fi
+git -C "${ROOT_DIR}" push -u origin main

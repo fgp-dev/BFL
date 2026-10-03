@@ -1,0 +1,2 @@
+Weights searched: integers 1..128, 256, 512, 1024, 25000
+Selection: minimum pooled validation errors across 3 tasks x 20 seeds; smallest X breaks ties; no test data used

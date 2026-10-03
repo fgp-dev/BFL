@@ -37,6 +37,10 @@ void test_packed_evaluation_and_batch() {
     std::size_t errors = 0;
     for (std::size_t i = 0; i < data.size(); ++i) {
         assert(predictions[i] == model.predict(data[i].input));
+        std::vector<Bit> scratch(model.node_count());
+        Bit output = 0;
+        model.predict_into(data[i].input.data(), &output, scratch.data());
+        assert(output == predictions[i][0]);
         errors += predictions[i][0] != data[i].target[0];
     }
     assert(metrics.error_bits == errors);
@@ -68,6 +72,80 @@ void test_training_and_state() {
     auto invalid = state;
     invalid[0] = 2;
     throws([&] { copy.import_state(invalid); });
+}
+
+void test_masked_change_used_rule() {
+    GreedyTrainConfig config;
+    config.update_rule = GreedyTrainConfig::UpdateRule::MaskedChangeUsed;
+    config.max_epochs = 1;
+    config.shuffle_candidates = false;
+    GreedyModel model({2, 1, 0, 0, 5});
+    const std::vector<Bit> input{0, 1};
+    const Bit before = model.predict(input)[0];
+    const Dataset correctable = {{input, {Bit(before ^ 1)}}};
+    const auto first = model.evaluate(correctable);
+    assert(first.error_bits == 1 && first.used_bits == 1);
+    const auto state = model.export_state();
+    const auto report = model.train(correctable, config);
+    const auto after = model.evaluate(correctable);
+    assert(report.tested_flips == 1 && report.accepted_flips == 1);
+    assert(report.initial_used_bits == 1 && report.final_used_bits == 1);
+    assert(after.error_bits == 0 && after.used_bits == 1);
+    assert(model.export_state()[0] == Bit(state[0] ^ 1));
+
+    GreedyModel tied({2, 1, 0, 0, 5});
+    const Dataset conflicting = {{input, {before}}, {input, {Bit(before ^ 1)}}};
+    const auto tied_state = tied.export_state();
+    const auto tied_report = tied.train(conflicting, config);
+    assert(tied_report.tested_flips == 1 && tied_report.accepted_flips == 0);
+    assert(tied.export_state() == tied_state);
+    assert(tied.evaluate(conflicting).used_bits == 2);
+
+    GreedyModel multi({3, 2, 2, 8, 42});
+    Dataset data;
+    for (int value = 0; value < 8; ++value) {
+        const Bit a = value & 1, b = (value >> 1) & 1, c = (value >> 2) & 1;
+        data.push_back({{a, b, c}, {Bit(a ^ b), Bit(b | c)}});
+    }
+    const auto initial = multi.evaluate(data);
+    config.max_epochs = 5;
+    const auto multi_report = multi.train(data, config);
+    const auto final = multi.evaluate(data);
+    assert(multi_report.initial_error_bits == initial.error_bits);
+    assert(multi_report.final_error_bits == final.error_bits);
+    assert(multi_report.initial_used_bits == initial.used_bits);
+    assert(multi_report.final_used_bits == final.used_bits);
+    assert(10 * final.error_bits + final.used_bits <=
+           10 * initial.error_bits + initial.used_bits);
+
+    GreedyModel inverse({3, 2, 2, 8, 42});
+    config.penalize_unused = true;
+    config.error_weight = 10;
+    const auto inverse_initial = inverse.evaluate(data);
+    const auto inverse_report = inverse.train(data, config);
+    const auto inverse_final = inverse.evaluate(data);
+    const auto available = data.size() * inverse.node_count();
+    assert(inverse_report.initial_used_bits == inverse_initial.used_bits);
+    assert(inverse_report.final_used_bits == inverse_final.used_bits);
+    assert(10 * inverse_final.error_bits + available - inverse_final.used_bits <=
+           10 * inverse_initial.error_bits + available - inverse_initial.used_bits);
+
+    GreedyModel equal_weight({3, 2, 2, 8, 42});
+    config.error_weight = 1;
+    const auto equal_initial = equal_weight.evaluate(data);
+    equal_weight.train(data, config);
+    const auto equal_final = equal_weight.evaluate(data);
+    assert(equal_final.error_bits + available - equal_final.used_bits <=
+           equal_initial.error_bits + available - equal_initial.used_bits);
+
+    GreedyModel recommended({3, 2, 2, 8, 42});
+    GreedyModel explicit_weight({3, 2, 2, 8, 42});
+    config.error_weight.reset();
+    recommended.train(data, config);
+    config.set_unused_lambda(1, GreedyTrainConfig::recommended_unused_error_weight);
+    explicit_weight.train(data, config);
+    assert(recommended.export_state() == explicit_weight.export_state());
+    throws([&] { config.set_unused_lambda(1, 0); });
 }
 
 void test_persistence() {
@@ -180,6 +258,7 @@ void test_pair_flips_reduce_error_when_single_flips_stall() {
 int main() {
     test_packed_evaluation_and_batch();
     test_training_and_state();
+    test_masked_change_used_rule();
     test_persistence();
     test_defaults_match_the_original_greedy_rule();
     test_search_extensions_never_return_a_worse_state();

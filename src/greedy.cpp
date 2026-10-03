@@ -111,19 +111,48 @@ void forward_block(const std::vector<std::size_t>& widths,
     }
 }
 
+// USED contains the active MUXes reached from the requested output lanes.
+// The selector source and the selected data source both affect a MUX's value.
+void trace_used(const std::vector<std::size_t>& widths,
+                const std::vector<std::size_t>& offsets,
+                const std::vector<std::uint64_t>& nodes,
+                const std::vector<std::uint64_t>& selectors,
+                std::uint64_t valid, std::vector<std::uint64_t>& used) {
+    for (std::size_t layer = widths.size(); layer-- > 1;) {
+        const auto offset = offsets[layer];
+        const auto previous = offsets[layer - 1];
+        for (std::size_t local = 0; local < widths[layer]; ++local) {
+            const auto id = offset + local;
+            const auto active = used[id] & valid;
+            if (!active) continue;
+            const auto selected = selectors[id] & valid;
+            const auto node = nodes[id];
+            used[previous + source_s(node)] |= active;
+            used[previous + source_a(node)] |= active & ~selected & valid;
+            used[previous + source_b(node)] |= active & selected;
+        }
+    }
+}
+
 GreedyMetrics evaluate_packed(const GreedyConfig& config,
                               const std::vector<std::size_t>& widths,
                               const std::vector<std::size_t>& offsets,
                               const std::vector<std::uint64_t>& nodes,
                               const PackedData& data) {
     std::vector<std::uint64_t> values(nodes.size()), selectors(nodes.size());
-    std::size_t errors = 0, exact = 0;
+    std::size_t errors = 0, exact = 0, used_bits = 0;
+    std::vector<std::uint64_t> used(nodes.size());
     const auto output_offset = offsets.back();
     for (std::size_t block = 0; block < data.valid.size(); ++block) {
         const auto valid = data.valid[block];
         forward_block(widths, offsets, nodes,
                       data.inputs.data() + block * config.input_bits,
                       valid, values, selectors);
+        std::fill(used.begin(), used.end(), 0);
+        for (std::size_t bit = 0; bit < config.output_bits; ++bit)
+            used[output_offset + bit] = valid;
+        trace_used(widths, offsets, nodes, selectors, valid, used);
+        for (const auto lanes : used) used_bits += popcount(lanes);
         std::uint64_t wrong = 0;
         for (std::size_t bit = 0; bit < config.output_bits; ++bit) {
             const auto error = (values[output_offset + bit] ^
@@ -135,7 +164,54 @@ GreedyMetrics evaluate_packed(const GreedyConfig& config,
     }
     return {errors,
             1.0 - double(errors) / (data.samples * config.output_bits),
-            double(exact) / data.samples};
+            double(exact) / data.samples, used_bits};
+}
+
+std::vector<std::vector<std::size_t>> collect_masked_candidates(
+    const GreedyConfig& config, const std::vector<std::size_t>& widths,
+    const std::vector<std::size_t>& offsets,
+    const std::vector<std::uint64_t>& nodes, const PackedData& data) {
+    std::vector<std::uint64_t> values(nodes.size()), selectors(nodes.size()), used(nodes.size());
+    std::vector<std::vector<std::size_t>> candidates;
+    const auto output_offset = offsets.back();
+    for (std::size_t block = 0; block < data.valid.size(); ++block) {
+        const auto valid = data.valid[block];
+        forward_block(widths, offsets, nodes,
+                      data.inputs.data() + block * config.input_bits,
+                      valid, values, selectors);
+        for (std::size_t bit = 0; bit < config.output_bits; ++bit) {
+            auto errors = (values[output_offset + bit] ^
+                data.targets[block * config.output_bits + bit]) & valid;
+            while (errors) {
+                const auto lane = errors & (~errors + 1);
+                errors &= errors - 1;
+                std::fill(used.begin(), used.end(), 0);
+                used[output_offset + bit] = lane;
+                trace_used(widths, offsets, nodes, selectors, lane, used);
+                std::vector<std::size_t> flip;
+                for (std::size_t id = 0; id < nodes.size(); ++id)
+                    if (used[id]) flip.push_back(id);
+                if (!flip.empty()) candidates.push_back(std::move(flip));
+            }
+        }
+    }
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+    return candidates;
+}
+
+std::size_t objective(const GreedyMetrics& metrics, std::size_t error_weight,
+                      std::size_t used_weight, bool penalize_unused,
+                      std::size_t available_bits) {
+    constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+    if (penalize_unused && metrics.used_bits > available_bits)
+        throw std::logic_error("USED exceeds available selector bits");
+    const auto usage = penalize_unused ? available_bits - metrics.used_bits : metrics.used_bits;
+    if ((error_weight && metrics.error_bits > maximum / error_weight) ||
+        (used_weight && usage >
+            (maximum - error_weight * metrics.error_bits) / used_weight))
+        throw std::overflow_error("Greedy objective is too large");
+    return error_weight * metrics.error_bits + used_weight * usage;
 }
 
 std::vector<std::size_t> collect_candidates(const GreedyConfig& config,
@@ -251,6 +327,12 @@ std::vector<Bit> GreedyModel::predict(const std::vector<Bit>& input) const {
     if (input.size() != config_.input_bits) throw std::invalid_argument("Input shape does not match model");
     for (Bit bit : input) require_bit(bit);
     std::vector<Bit> values(nodes_.size());
+    std::vector<Bit> output(config_.output_bits);
+    predict_into(input.data(), output.data(), values.data());
+    return output;
+}
+
+void GreedyModel::predict_into(const Bit* input, Bit* output, Bit* values) const noexcept {
     for (std::size_t layer = 0; layer < layer_widths_.size(); ++layer) {
         const auto previous = layer ? layer_offsets_[layer - 1] : 0;
         for (std::size_t local = 0; local < layer_widths_[layer]; ++local) {
@@ -262,7 +344,8 @@ std::vector<Bit> GreedyModel::predict(const std::vector<Bit>& input) const {
             values[id] = (dynamic ^ Bit((node & state_mask) != 0)) ? b : a;
         }
     }
-    return {values.begin() + layer_offsets_.back(), values.end()};
+    for (std::size_t bit = 0; bit < config_.output_bits; ++bit)
+        output[bit] = values[layer_offsets_.back() + bit];
 }
 
 std::vector<std::vector<Bit>> GreedyModel::predict_batch(
@@ -282,81 +365,165 @@ GreedyTrainReport GreedyModel::train(const Dataset& data, const GreedyTrainConfi
     auto current = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
     GreedyTrainReport report;
     report.initial_error_bits = current.error_bits;
-    const bool anneal = config.initial_temperature > 0;
-    double temperature = config.initial_temperature;
-    std::size_t best_error = current.error_bits;
-    std::vector<std::uint64_t> best_nodes;
-    if (anneal) best_nodes = nodes_;
-    std::size_t stagnant = 0;
-    std::uint32_t rng = config.seed ? config.seed : 1u;
-    for (std::size_t epoch = 1; epoch <= config.max_epochs && best_error; ++epoch) {
-        report.epochs_ran = epoch;
-        auto pool = collect_candidates(config_, layer_widths_, layer_offsets_, nodes_, packed);
-        if (config.shuffle_candidates && pool.size() > 1) {
-            for (std::size_t i = pool.size() - 1; i > 0; --i) {
-                const auto j = rng_range(rng, static_cast<std::uint32_t>(i + 1));
-                std::swap(pool[i], pool[j]);
+    report.initial_used_bits = current.used_bits;
+    const bool masked = config.update_rule == GreedyTrainConfig::UpdateRule::MaskedChangeUsed;
+    const auto error_weight = config.error_weight.value_or(config.penalize_unused ?
+        GreedyTrainConfig::recommended_unused_error_weight : std::size_t{10});
+    std::size_t available_bits = 0;
+    if (masked && config.penalize_unused) {
+        if (packed.samples > std::numeric_limits<std::size_t>::max() / nodes_.size())
+            throw std::overflow_error("Dataset selector count is too large");
+        available_bits = packed.samples * nodes_.size();
+    }
+    auto current_score = masked ? objective(current, error_weight, config.used_weight,
+        config.penalize_unused, available_bits) : current.error_bits;
+    if (!masked) {
+        const bool anneal = config.initial_temperature > 0;
+        double temperature = config.initial_temperature;
+        std::size_t best_error = current.error_bits;
+        std::vector<std::uint64_t> best_nodes;
+        if (anneal) best_nodes = nodes_;
+        std::size_t stagnant = 0;
+        std::uint32_t rng = config.seed ? config.seed : 1u;
+        for (std::size_t epoch = 1; epoch <= config.max_epochs && best_error; ++epoch) {
+            report.epochs_ran = epoch;
+            auto pool = collect_candidates(config_, layer_widths_, layer_offsets_, nodes_, packed);
+            if (config.shuffle_candidates && pool.size() > 1) {
+                for (std::size_t i = pool.size() - 1; i > 0; --i) {
+                    const auto j = rng_range(rng, static_cast<std::uint32_t>(i + 1));
+                    std::swap(pool[i], pool[j]);
+                }
             }
-        }
-        auto candidates = pool;
-        if (config.candidate_limit && candidates.size() > config.candidate_limit)
-            candidates.resize(config.candidate_limit);
-        bool improved = false;
-        const auto note = [&] {
-            if (current.error_bits < best_error) {
-                best_error = current.error_bits;
-                if (anneal) best_nodes = nodes_;
-                improved = true;
-            }
-        };
-        for (const auto id : candidates) {
-            ++report.tested_flips;
-            nodes_[id] ^= state_mask;
-            const auto trial = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
-            bool keep = trial.error_bits < current.error_bits;
-            if (!keep && anneal) {
-                const double increase = double(trial.error_bits) - double(current.error_bits);
-                const double draw = rng_next(rng) / 4294967296.0;
-                keep = increase <= 0 || draw < std::exp(-increase / temperature);
-            }
-            if (keep) {
-                current = trial;
-                ++report.accepted_flips;
-                note();
-            } else {
-                nodes_[id] ^= state_mask;
-            }
-            if (!best_error) break;
-        }
-        if (!improved && best_error && config.pair_flips && pool.size() > 1) {
-            for (std::size_t k = 0; k < config.pair_flips; ++k) {
-                const auto i = rng_range(rng, static_cast<std::uint32_t>(pool.size()));
-                auto j = rng_range(rng, static_cast<std::uint32_t>(pool.size() - 1));
-                if (j >= i) ++j;
+            auto candidates = pool;
+            if (config.candidate_limit && candidates.size() > config.candidate_limit)
+                candidates.resize(config.candidate_limit);
+            report.training_working_bytes = std::max(report.training_working_bytes,
+                (packed.inputs.capacity() + packed.targets.capacity() + packed.valid.capacity() +
+                 3 * nodes_.size()) * sizeof(std::uint64_t) +
+                (pool.capacity() + candidates.capacity()) * sizeof(std::size_t) +
+                best_nodes.capacity() * sizeof(std::uint64_t));
+            bool improved = false;
+            const auto note = [&] {
+                if (current.error_bits < best_error) {
+                    best_error = current.error_bits;
+                    if (anneal) best_nodes = nodes_;
+                    improved = true;
+                }
+            };
+            for (const auto id : candidates) {
                 ++report.tested_flips;
-                nodes_[pool[i]] ^= state_mask;
-                nodes_[pool[j]] ^= state_mask;
+                nodes_[id] ^= state_mask;
                 const auto trial = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
-                if (trial.error_bits < current.error_bits) {
+                bool keep = trial.error_bits < current.error_bits;
+                if (!keep && anneal) {
+                    const double increase = double(trial.error_bits) - double(current.error_bits);
+                    const double draw = rng_next(rng) / 4294967296.0;
+                    keep = increase <= 0 || draw < std::exp(-increase / temperature);
+                }
+                if (keep) {
                     current = trial;
                     ++report.accepted_flips;
                     note();
-                    if (!best_error) break;
                 } else {
+                    nodes_[id] ^= state_mask;
+                }
+                if (!best_error) break;
+            }
+            if (!improved && best_error && config.pair_flips && pool.size() > 1) {
+                for (std::size_t k = 0; k < config.pair_flips; ++k) {
+                    const auto i = rng_range(rng, static_cast<std::uint32_t>(pool.size()));
+                    auto j = rng_range(rng, static_cast<std::uint32_t>(pool.size() - 1));
+                    if (j >= i) ++j;
+                    ++report.tested_flips;
                     nodes_[pool[i]] ^= state_mask;
                     nodes_[pool[j]] ^= state_mask;
+                    const auto trial = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
+                    if (trial.error_bits < current.error_bits) {
+                        current = trial;
+                        ++report.accepted_flips;
+                        note();
+                        if (!best_error) break;
+                    } else {
+                        nodes_[pool[i]] ^= state_mask;
+                        nodes_[pool[j]] ^= state_mask;
+                    }
                 }
             }
+            if (anneal) temperature *= config.cooling;
+            stagnant = improved ? 0 : stagnant + 1;
+            if (config.patience && stagnant >= config.patience) break;
         }
-        if (anneal) temperature *= config.cooling;
-        stagnant = improved ? 0 : stagnant + 1;
+        if (anneal && best_error < current.error_bits) {
+            nodes_ = best_nodes;
+            current = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
+        }
+        report.final_error_bits = current.error_bits;
+        report.final_used_bits = current.used_bits;
+        return report;
+    }
+    std::size_t stagnant = 0;
+    std::uint32_t rng = config.seed ? config.seed : 1u;
+    auto shuffle = [&](std::vector<std::vector<std::size_t>>& candidates) {
+        if (config.shuffle_candidates && candidates.size() > 1) {
+            for (std::size_t i = candidates.size() - 1; i > 0; --i) {
+                const auto j = rng_range(rng, static_cast<std::uint32_t>(i + 1));
+                std::swap(candidates[i], candidates[j]);
+            }
+        }
+    };
+    for (std::size_t epoch = 1; epoch <= config.max_epochs && current.error_bits; ++epoch) {
+        report.epochs_ran = epoch;
+        std::vector<std::vector<std::size_t>> candidates;
+        if (masked) {
+            candidates = collect_masked_candidates(
+                config_, layer_widths_, layer_offsets_, nodes_, packed);
+        } else {
+            for (const auto id : collect_candidates(
+                     config_, layer_widths_, layer_offsets_, nodes_, packed))
+                candidates.push_back({id});
+        }
+        shuffle(candidates);
+        if (!masked && config.candidate_limit && candidates.size() > config.candidate_limit)
+            candidates.resize(config.candidate_limit);
+        std::size_t candidate_bytes = candidates.capacity() * sizeof(std::vector<std::size_t>);
+        for (const auto& candidate : candidates)
+            candidate_bytes += candidate.capacity() * sizeof(std::size_t);
+        report.training_working_bytes = std::max(report.training_working_bytes,
+            (packed.inputs.capacity() + packed.targets.capacity() + packed.valid.capacity() +
+             3 * nodes_.size()) * sizeof(std::uint64_t) + candidate_bytes);
+        std::size_t accepted = 0;
+        std::size_t index = 0, tested = 0;
+        while (index < candidates.size() &&
+               (!masked || !config.candidate_limit || tested < config.candidate_limit)) {
+            const auto& flip = candidates[index++];
+            ++report.tested_flips;
+            ++tested;
+            for (const auto id : flip) nodes_[id] ^= state_mask;
+            const auto trial = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
+            const auto trial_score = masked ? objective(trial, error_weight, config.used_weight,
+                config.penalize_unused, available_bits) : trial.error_bits;
+            const bool keep = trial_score < current_score;
+            if (keep) {
+                current = trial;
+                current_score = trial_score;
+                ++accepted;
+                ++report.accepted_flips;
+            } else {
+                for (const auto id : flip) nodes_[id] ^= state_mask;
+            }
+            if (!current.error_bits) break;
+            if (keep && masked) {
+                candidates = collect_masked_candidates(
+                    config_, layer_widths_, layer_offsets_, nodes_, packed);
+                shuffle(candidates);
+                index = 0;
+            }
+        }
+        stagnant = accepted ? 0 : stagnant + 1;
         if (config.patience && stagnant >= config.patience) break;
     }
-    if (anneal && best_error < current.error_bits) {
-        nodes_ = best_nodes;
-        current = evaluate_packed(config_, layer_widths_, layer_offsets_, nodes_, packed);
-    }
     report.final_error_bits = current.error_bits;
+    report.final_used_bits = current.used_bits;
     return report;
 }
 

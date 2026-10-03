@@ -15,8 +15,8 @@ def main(path):
         for row in csv.DictReader(source):
             groups[(row["task"], row["model"])].append(row)
 
-    print("| Task | Model | Train accuracy | Validation accuracy | Test accuracy | Mean training ms |")
-    print("|---|---|---:|---:|---:|---:|")
+    print("| Task | Model | Train accuracy | Validation accuracy | Test accuracy | Test USED / sample | Mean training ms |")
+    print("|---|---|---:|---:|---:|---:|---:|")
     for key in sorted(groups):
         rows = groups[key]
         if len(rows) != 20 or len({row["seed"] for row in rows}) != 20:
@@ -24,8 +24,10 @@ def main(path):
         train = mean(float(row["train_accuracy"]) for row in rows)
         validation = mean(float(row["validation_accuracy"]) for row in rows)
         test = mean(float(row["test_accuracy"]) for row in rows)
+        used = (f'{mean(int(row["test_used_bits"]) / int(row["test_samples"]) for row in rows):.2f}'
+                if rows[0].get("test_used_bits") else "—")
         milliseconds = mean(float(row["training_ms"]) for row in rows)
-        print(f"| {key[0]} | {key[1]} | {train:.3f} | {validation:.3f} | {test:.3f} | {milliseconds:.1f} |")
+        print(f"| {key[0]} | {key[1]} | {train:.3f} | {validation:.3f} | {test:.3f} | {used} | {milliseconds:.1f} |")
 
 
 if __name__ == "__main__":

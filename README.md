@@ -1,8 +1,8 @@
 # Bit Flip Learning (BFL)
 
-This C++17 library provides two explicit BFL learning models. `bfl::GreedyModel` is a layered MUX network whose selector is a graph signal XOR a learned inversion bit. It traces active paths, tests candidate bit flips, and keeps a flip only when global training error falls. `bfl::Graph` is the direct-selector, route-key experiment. Both models and their different learning rules are described in [BFL_Theory.tex](BFL_Theory.tex).
+This C++17 library provides three BFL learning models. `bfl::GreedyModel` is a layered MUX network whose selector is a graph signal XOR a learned inversion bit. It supports both single-bit greedy flips and joint `CHANGE AND USED` path flips, accepted by a global error-plus-usage score. `bfl::Graph` is the direct-selector, route-key experiment. `bfl::RoutedBinaryModel` learns binary feature states on input-defined routes. The [greedy model documentation](docs/greedy.md) defines their training rules.
 
-The [matched held-out comparison](results/README.md#c-generalization-comparison) runs both C++ models and a small ANN on identical data splits. On the OR task, `GreedyModel` with validation-based topology selection reached 76.2% test accuracy and the ANN reached 100%; this is a new experiment, not a reproduction of the historical ~80% figure.
+The [matched held-out comparison](results/README.md#changeused-greedy-comparison) runs the greedy rules with `USED`, `NOT(USED)`, and no usage term, plus the direct-state graph and ANNs with 4 and 16 hidden units on identical data splits. A [validation-only search](results/README.md#selecting-the-error-weight-x) over 132 error weights selected `X=17` for `X * error + NOT(USED)`. That variant reached 68.9% pooled test accuracy across OR, XOR, and majority; the earlier single-bit greedy reached 70.1%, and both ANNs reached 100%.
 
 ## State and route
 
@@ -20,6 +20,18 @@ The first evaluation uses all-zero events. Training proceeds in dataset order, t
 
 ## Build and run
 
+Configure, build, and run the tests with CMake:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+The text generation and BFLCODE experiments live in the sibling `BFL-extras/` directory. They are separate from the BFL library and its GitHub source tree.
+
+For a direct compiler build, use:
+
 ```sh
 g++ -std=c++17 -O3 -Wall -Wextra -Wpedantic -Iinclude src/bfl.cpp src/greedy.cpp tests/test_bfl.cpp -o bfl_tests
 ./bfl_tests
@@ -29,10 +41,17 @@ g++ -std=c++17 -O3 -Wall -Wextra -Wpedantic -Iinclude src/bfl.cpp src/greedy.cpp
 ./bfl_example
 bash scripts/reproduce.sh results/local
 bash scripts/reproduce_generalization.sh results/local-generalization
+bash scripts/reproduce_bfl_vs_ann.sh results 50
 ```
 
-CMake is supported when available: configure, build, then run `ctest`. The benchmark compares BFL with a two-bit majority baseline on parity and majority targets. For each input width and seed, it shuffles the finite binary domain, fits on the first half, and evaluates on the next quarter. It reports training and held-out loss and accuracy, training and inference time, model bytes, node and state counts, distinct route counts, and mean training examples per route. The batch API is a scalar loop over examples, so its time includes the same evaluation semantics. See [results/README.md](results/README.md) for measured results and prior-run provenance.
+The benchmark compares BFL with a two-bit majority baseline on parity and majority targets. For each input width and seed, it shuffles the finite binary domain, fits on the first half, and evaluates on the next quarter. It reports training and held-out loss and accuracy, training and inference time, model bytes, node and state counts, distinct route counts, and mean training examples per route. The batch API is a scalar loop over examples, so its time includes the same evaluation semantics. See [results/README.md](results/README.md) for measured results and prior-run provenance.
 
 `Graph::memory_bytes()` estimates object and allocated vector/map storage, including route states and event bits; it excludes allocator metadata, temporary evaluation buffers, datasets, and executable code. The online rule can oscillate or hurt held-out accuracy. Sharing a route is a structural property, not a demonstrated generalization benefit.
 
 `GreedyModel` is documented in [docs/greedy.md](docs/greedy.md). Its MUX topology and learned state occupy one packed 64-bit word per node. The generalization benchmark uses 16 independently initialized topologies and selects one using validation data; the test set is evaluated afterward. The source tree and build use C++ only.
+
+The separate [binary-global benchmark](results/README.md#binary-global-vs-ann) uses `RoutedBinaryModel`, integrated from the [standalone AND-U experiment](benchmarks/standalone_routed_binary_andu.cpp), as the primary BFL binary-global model. It compares that model with the original single-bit MUX greedy and a 16-unit ANN on 50 disjoint 10-bit splits. Its CSV includes accuracy, storage, temporary memory, training and inference timing, and greedy decision counters. The old MUX model and its API remain available.
+
+## Publishing
+
+Run `bash scripts/publish.sh --prepare` to build and test the current tree. Review `git status`, commit the intended sources and results, then run `bash scripts/publish.sh --publish` to push the clean `main` branch to the existing `fgp-dev/BFL` repository.
